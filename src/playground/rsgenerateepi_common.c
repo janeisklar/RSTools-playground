@@ -83,7 +83,7 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
     fclose(referenceFile);
 
     if (p->nReferenceValues < 2) {
-        fprintf(stderr, "\nError: The reference file must contain more than one value\n", p->referencePath);
+        fprintf(stderr, "\nError: The reference file (%s) must contain more than one value\n", p->referencePath);
         return;
     }
 
