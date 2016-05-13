@@ -17,6 +17,7 @@ typedef struct {
     char *maskPath;
     char *correlationPath;
     char *referencePath;
+    char *smoothnessReferencePath;
     char *callString;
 
     BOOL verbose;
@@ -27,9 +28,13 @@ typedef struct {
     rsNiftiFile *maskFile;
     rsNiftiFile *correlationFile;
     rsNiftiFile *output;
+    rsNiftiFile *smoothnessReferenceFile;
 
     double *reference;
     unsigned int nReferenceValues;
+
+    int kernelSize;
+    double ***meanKernel;
 
     Point3D *maskPoints;
     unsigned long nPoints;

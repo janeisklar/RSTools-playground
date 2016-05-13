@@ -8,6 +8,7 @@ rsGenerateEpiParameters *rsGenerateEpiInitParameters()
     p->stdPath = NULL;
     p->meanPath = NULL;
     p->maskPath = NULL;
+    p->smoothnessReferencePath = NULL;
     p->correlationPath = NULL;
     p->referencePath = NULL;
     p->callString = NULL;
@@ -18,6 +19,8 @@ rsGenerateEpiParameters *rsGenerateEpiInitParameters()
     p->correlationFile = NULL;
     p->output = NULL;
     p->parametersValid = FALSE;
+    p->kernelSize = 21;
+    p->meanKernel = NULL;
     p->threads = 1;
     p->interface = NULL;
 
@@ -32,6 +35,7 @@ void rsGenerateEpiFreeParams(rsGenerateEpiParameters *p)
     rsFree(p->maskPath);
     rsFree(p->correlationPath);
     rsFree(p->referencePath);
+    rsFree(p->smoothnessReferencePath);
     rsFree(p->output);
     rsFree(p->callString);
     rsUIDestroyInterface(p->interface);
@@ -100,6 +104,14 @@ void rsGenerateEpiBuildInterface(rsGenerateEpiParameters *p)
     o->type = G_OPTION_ARG_FILENAME;
     o->storage = &p->outputPath;
     o->cli_description = "the volume that will be created";
+    o->cli_arg_description = "<volume>";
+    rsUIAddOption(p->interface, o);
+
+    o = rsUINewOption();
+    o->name = "smoothnessReference";
+    o->type = G_OPTION_ARG_FILENAME;
+    o->storage = &p->smoothnessReferencePath;
+    o->cli_description = "a 4D-nifti that will be taken as a reference for the smoothness of the resulting output";
     o->cli_arg_description = "<volume>";
     rsUIAddOption(p->interface, o);
 
