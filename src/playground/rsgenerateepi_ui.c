@@ -1,3 +1,4 @@
+#include <utils/rsui.h>
 #include "rsgenerateepi_ui.h"
 
 rsGenerateEpiParameters *rsGenerateEpiInitParameters()
@@ -8,7 +9,7 @@ rsGenerateEpiParameters *rsGenerateEpiInitParameters()
     p->stdPath = NULL;
     p->meanPath = NULL;
     p->maskPath = NULL;
-    p->smoothnessReferencePath = NULL;
+    p->neighbourhoodCorrelationPath = NULL;
     p->correlationPath = NULL;
     p->referencePath = NULL;
     p->callString = NULL;
@@ -20,7 +21,8 @@ rsGenerateEpiParameters *rsGenerateEpiInitParameters()
     p->output = NULL;
     p->parametersValid = FALSE;
     p->kernelSize = 21;
-    p->meanKernel = NULL;
+    p->TR = -1.0;
+    p->sigma = -1.0;
     p->threads = 1;
     p->interface = NULL;
 
@@ -35,7 +37,7 @@ void rsGenerateEpiFreeParams(rsGenerateEpiParameters *p)
     rsFree(p->maskPath);
     rsFree(p->correlationPath);
     rsFree(p->referencePath);
-    rsFree(p->smoothnessReferencePath);
+    rsFree(p->neighbourhoodCorrelationPath);
     rsFree(p->output);
     rsFree(p->callString);
     rsUIDestroyInterface(p->interface);
@@ -62,6 +64,11 @@ rsGenerateEpiParameters *rsGenerateEpiParseParams(int argc, char *argv[])
         return p;
     }
 
+    if (p->neighbourhoodCorrelationPath == NULL) {
+        fprintf(stderr, "No correlation volume specified(--neighbourhoodCorrelation)!\n");
+        return p;
+    }
+
     if (p->outputPath == NULL) {
         fprintf(stderr, "No output volume specified(--output)!\n");
         return p;
@@ -74,6 +81,16 @@ rsGenerateEpiParameters *rsGenerateEpiParseParams(int argc, char *argv[])
 
     if (p->maskPath == NULL) {
         fprintf(stderr, "No mask file specified(--mask)!\n");
+        return p;
+    }
+
+    if (p->TR < 0.01) {
+        fprintf(stderr, "TR needs to be specified(--TR)!\n");
+        return p;
+    }
+
+    if (p->sigma < 0.0001) {
+        fprintf(stderr, "The sigma for the temporal smoothing needs to be specified(--sigma)!\n");
         return p;
     }
 
@@ -108,10 +125,11 @@ void rsGenerateEpiBuildInterface(rsGenerateEpiParameters *p)
     rsUIAddOption(p->interface, o);
 
     o = rsUINewOption();
-    o->name = "smoothnessReference";
+    o->name = "neighbourhoodCorrelation";
+    o->shorthand = 'n';
     o->type = G_OPTION_ARG_FILENAME;
-    o->storage = &p->smoothnessReferencePath;
-    o->cli_description = "a 4D-nifti that will be taken as a reference for the smoothness of the resulting output";
+    o->storage = &p->neighbourhoodCorrelationPath;
+    o->cli_description = "a 4D-nifti created with rsneighbourhoodcorrelation that is applied to the randomly generated data to recover its intrinsic structure";
     o->cli_arg_description = "<volume>";
     rsUIAddOption(p->interface, o);
 
@@ -135,7 +153,7 @@ void rsGenerateEpiBuildInterface(rsGenerateEpiParameters *p)
     o->name = "mask";
     o->type = G_OPTION_ARG_FILENAME;
     o->storage = &p->maskPath;
-    o->cli_description = "a 3D-nifti mask-file that specifies the voxels which will be specified (select as few voxels as possible as the processing is rather time-consuming)";
+    o->cli_description = "a 3D-nifti mask-file that specifies the voxels which will be sampled (select as few voxels as possible as the processing is rather time-consuming)";
     o->cli_arg_description = "<volume>";
     rsUIAddOption(p->interface, o);
 
@@ -146,6 +164,22 @@ void rsGenerateEpiBuildInterface(rsGenerateEpiParameters *p)
     o->cli_description =
         "a txt-file that contains the reference timecourse. The output timecourses will correlate with this timecourse by the r-values specified using --correlation";
     o->cli_arg_description = "<txt-file>";
+    rsUIAddOption(p->interface, o);
+
+    o = rsUINewOption();
+    o->name = "sigma";
+    o->type = G_OPTION_ARG_DOUBLE;
+    o->storage = &p->sigma;
+    o->cli_description = "The sigma of the gaussian smoothing kernel that is applied to the timecourses";
+    o->cli_arg_description = "<float>";
+    rsUIAddOption(p->interface, o);
+
+    o = rsUINewOption();
+    o->name = "TR";
+    o->type = G_OPTION_ARG_DOUBLE;
+    o->storage = &p->TR;
+    o->cli_description = "The repetition rate (used in conjunction with sigma for the temporal smoothing of the data). Should also be equal to the TR used to create the standard deviation file.";
+    o->cli_arg_description = "<float>";
     rsUIAddOption(p->interface, o);
 
     o = rsUINewOption();

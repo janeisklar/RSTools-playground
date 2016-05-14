@@ -10,7 +10,7 @@
 void rsGenerateEpiSampleVolume(const rsGenerateEpiParameters *p, const gsl_rng *rng, const short t);
 void rsGenerateEpiAdjustCorrelationForPoint(const rsGenerateEpiParameters *p, const Point3D *point);
 void rsGenerateEpiEstimateSmoothness(rsGenerateEpiParameters *p);
-void rsGenerateEpiApplySmoothnessToVolume(const rsGenerateEpiParameters *p, const short t);
+void rsGenerateEpiApplyNeighbourhoodCorrelationToVolume(const rsGenerateEpiParameters *p, const short t);
 void rsGenerateEpiSmoothVoxelTemporally(const rsGenerateEpiParameters *p, const Point3D *point);
 void rsConvolveWithKernel(double ***result, double ***input, double ***kernel, short xdim, short ydim, short zdim, short xdimKernel, short ydimKernel, short zdimKernel);
 double ***rsCreateGaussianKernel(double sigma, short *xdimkernel, short *ydimkernel, short *zdimkernel, double xvoxsize, double yvoxsize, double zvoxsize);
@@ -27,7 +27,7 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
         (const char *) p->meanPath,
         (const char *) p->stdPath,
         (const char *) p->maskPath,
-        (const char *) p->smoothnessReferencePath,
+        (const char *) p->neighbourhoodCorrelationPath,
         RSIO_LASTFILE
     });
 
@@ -43,13 +43,15 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
     rsSetThreadsNum(p->threads);
 
     if (p->verbose) {
-        fprintf(stdout, "Smoothness reference file: %s\n", p->smoothnessReferencePath);
+        fprintf(stdout, "Neighbourhood correlation file: %s\n", p->neighbourhoodCorrelationPath);
         fprintf(stdout, "Timecourse reference file: %s\n", p->referencePath);
         fprintf(stdout, "Correlation file: %s\n", p->correlationPath);
         fprintf(stdout, "Mean file: %s\n", p->meanPath);
         fprintf(stdout, "Std file: %s\n", p->stdPath);
         fprintf(stdout, "Mask file: %s\n", p->maskPath);
         fprintf(stdout, "Output file: %s\n", p->outputPath);
+        fprintf(stdout, "TR: %.2f\n", p->TR);
+        fprintf(stdout, "Temporal smoothing sigma: %.2f\n", p->sigma);
     }
 
     // load correlation file
@@ -80,16 +82,31 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
 
     rsCloseNiftiFileAndFree(p->maskFile);
 
-    // load smoothness reference file
-    p->smoothnessReferenceFile = rsOpenNiftiFile(p->smoothnessReferencePath, RSNIFTI_OPEN_NONE);
+    // load neighbourhood correlation file
+    if (p->verbose) {
+        fprintf(stdout, "Reading in neighbourhood correlation file..\n");
+    }
+    p->neighbourhoodCorrelationFile = rsOpenNiftiFile(p->neighbourhoodCorrelationPath, RSNIFTI_OPEN_READ);
 
-    if (!p->smoothnessReferenceFile->readable) {
-        fprintf(stderr, "\nError: The nifti file containing the smoothness reference (%s) could not be read.\n", p->smoothnessReferencePath);
+    if (!p->neighbourhoodCorrelationFile->readable) {
+        fprintf(stderr, "\nError: The nifti file containing the neighbourhood correlation (%s) could not be read.\n", p->neighbourhoodCorrelationPath);
         return;
     }
 
-    if (p->smoothnessReferenceFile->xDim != p->correlationFile->xDim || p->smoothnessReferenceFile->yDim != p->correlationFile->yDim || p->smoothnessReferenceFile->zDim != p->correlationFile->zDim) {
-        fprintf(stderr, "\nError: The dimensions of both the smoothness reference and correlation file must match!\n");
+    if (p->neighbourhoodCorrelationFile->xDim != p->correlationFile->xDim || p->neighbourhoodCorrelationFile->yDim != p->correlationFile->yDim || p->neighbourhoodCorrelationFile->zDim != p->correlationFile->zDim) {
+        fprintf(stderr, "\nError: The dimensions x, y and z of both the neighbourhood correlation file and correlation file must match!\n");
+        return;
+    }
+
+    // derive kernel size from the length of the given neighbourhood correlation file
+    p->kernelSize = (int)round(pow(p->neighbourhoodCorrelationFile->vDim, 1.0/3.0));
+
+    if (p->verbose) {
+        fprintf(stdout, "Neighbourhood correlation file contains %d volumes. Assuming a correlation matrix width of %d.\n", p->neighbourhoodCorrelationFile->vDim, p->kernelSize);
+    }
+
+    if (p->kernelSize % 2 == 0) { // kernel size needs to be an uneven number
+        fprintf(stderr, "\nError: The supplied neighbourhood correlation file does not look valid!\n");
         return;
     }
 
@@ -145,12 +162,15 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
         return;
     }
 
+    // get voxel spacing
+    float xSpacing, ySpacing, zSpacing, tr;
+    FslGetVoxDim(p->output->fslio, &xSpacing, &ySpacing, &zSpacing, &tr);
+    FslSetVoxDim(p->output->fslio, xSpacing, ySpacing, zSpacing, p->TR);
+
     if (p->verbose) {
-        fprintf(stdout, "Smoothness Reference Dim: %d %d %d (%d Volumes)\n", p->smoothnessReferenceFile->xDim, p->smoothnessReferenceFile->yDim, p->smoothnessReferenceFile->zDim, p->smoothnessReferenceFile->vDim);
+        fprintf(stdout, "Neighbourhood Correlation Dim: %d %d %d (%d Volumes)\n", p->neighbourhoodCorrelationFile->xDim, p->neighbourhoodCorrelationFile->yDim, p->neighbourhoodCorrelationFile->zDim, p->neighbourhoodCorrelationFile->vDim);
         fprintf(stdout, "Output Dim: %d %d %d (%d Volumes)\n", p->output->xDim, p->output->yDim, p->output->zDim, p->output->vDim);
     }
-
-    rsCloseNiftiFile(p->smoothnessReferenceFile, FALSE);
 
     p->parametersValid = TRUE;
     return;
@@ -185,58 +205,57 @@ void rsGenerateEpiRun(rsGenerateEpiParameters *p)
 
     if (p->verbose) {
         fprintf(stdout, "Found %lu points in the mask\n", p->nPoints);
-        fprintf(stdout, "Estimating smoothness of the supplied smoothness reference epi\n");
-    }
-
-    rsGenerateEpiEstimateSmoothness(p);
-
-    if (p->verbose) {
         fprintf(stdout, "Sampling random timecourses\n");
     }
 
     //initialize gsl random number generator
-    unsigned int seed;
-    const unsigned int numThreads = rsGetThreadsNum();
-    gsl_rng **rng;
-    gsl_rng_env_setup();
-    rng = (gsl_rng **)rsMalloc(((size_t)numThreads) * sizeof(gsl_rng *));
-    const gsl_rng_type *rng_t = gsl_rng_default;
-    struct timeval tv;
-
-    for (unsigned int t = 0; t < numThreads; t++) {
-        gettimeofday(&tv, 0);
-        seed = tv.tv_sec + tv.tv_usec;
-        rng[t] = gsl_rng_alloc(rng_t);
-        gsl_rng_set(rng[t], seed * t);
-    }
-
-    unsigned int tNum, t;
-    #pragma omp parallel num_threads(rsGetThreadsNum()) private(t,tNum) shared(rng,p)
     {
-        tNum = omp_get_thread_num();
-        #pragma omp for schedule(guided, 1)
-        for (t=0; t < p->output->vDim; t++) {
-            rsGenerateEpiSampleVolume(p, rng[tNum], t);
+        unsigned int seed;
+        const unsigned int numThreads = rsGetThreadsNum();
+        gsl_rng **rng;
+        gsl_rng_env_setup();
+        rng = (gsl_rng **) rsMalloc(((size_t) numThreads) * sizeof(gsl_rng *));
+        const gsl_rng_type *rng_t = gsl_rng_default;
+        struct timeval tv;
+
+        for (unsigned int t = 0; t < numThreads; t++) {
+            gettimeofday(&tv, 0);
+            seed = tv.tv_sec + tv.tv_usec;
+            rng[t] = gsl_rng_alloc(rng_t);
+            gsl_rng_set(rng[t], seed * t);
         }
+
+        unsigned int tNum, t;
+        #pragma omp parallel num_threads(rsGetThreadsNum()) private(t,tNum) shared(rng,p)
+        {
+            tNum = omp_get_thread_num();
+            #pragma omp for schedule(guided, 1)
+            for (t = 0; t < p->output->vDim; t++) {
+                rsGenerateEpiSampleVolume(p, rng[tNum], t);
+            }
+        }
+
+        //free random number generator
+        for (short i = 0; i < numThreads; i++) {
+            gsl_rng_free(rng[i]);
+        }
+        free(rng);
     }
 
-
-    //free random number generator
-    for (short i = 0; i < numThreads; i++) {
-        gsl_rng_free(rng[i]);
-    }
-    free(rng);
-
-    // smooth data
+    // apply neighbourhood correlation
     if (p->verbose) {
-        fprintf(stdout, "Apply spatial smoothness to the randomly generated data\n");
+        fprintf(stdout, "Re-assemble randomly generated data at every point using the corresponding neighbourhood correlation matrix to achieve an intrinsic structure similar to that of a real EPI\n");
     }
 
+    unsigned int t;
     #pragma omp parallel num_threads(rsGetThreadsNum()) private(t) shared(p)
     {
         #pragma omp for schedule(guided, 1)
         for (t=0; t < p->output->vDim; t++) {
-            rsGenerateEpiApplySmoothnessToVolume(p, t);
+            // apply correlation matrices three times to get more spatially stable results
+            rsGenerateEpiApplyNeighbourhoodCorrelationToVolume(p, t);
+            rsGenerateEpiApplyNeighbourhoodCorrelationToVolume(p, t);
+            rsGenerateEpiApplyNeighbourhoodCorrelationToVolume(p, t);
         }
     }
 
@@ -320,93 +339,6 @@ void rsGenerateEpiRun(rsGenerateEpiParameters *p)
     FslWriteVolumes(p->output->fslio, p->output->data, p->output->vDim);
 
     p->parametersValid = TRUE;
-}
-
-void rsGenerateEpiEstimateSmoothness(rsGenerateEpiParameters *p)
-{
-
-    p->smoothnessReferenceFile = rsOpenNiftiFile(p->smoothnessReferencePath, RSNIFTI_OPEN_READ);
-
-    if (!p->smoothnessReferenceFile->readable) {
-        fprintf(stderr, "\nError: The nifti file containing the smoothness reference (%s) could not be read.\n", p->smoothnessReferencePath);
-        return;
-    }
-
-    double ****neighbourhoodCorrelations = d4lmatrix(p->nPoints-1, p->kernelSize - 1, p->kernelSize - 1, p->kernelSize - 1);
-
-    // for every point in the mask compute the correlation with its surrounding points
-    {
-        unsigned long i;
-        Point3D *pointA;
-        Point3D *pointB;
-        const int halfKernelSize = floor(p->kernelSize / 2);
-        short j, k, l, x, y, z;
-        const short maxX = p->smoothnessReferenceFile->xDim - 1;
-        const short maxY = p->smoothnessReferenceFile->yDim - 1;
-        const short maxZ = p->smoothnessReferenceFile->zDim - 1;
-        double *seriesA;
-        double *seriesB;
-        double r;
-        #pragma omp parallel num_threads(rsGetThreadsNum()) private(i,j,k,l,x,y,z,pointA,pointB,seriesA,seriesB,r) shared(p,neighbourhoodCorrelations)
-        {
-            #pragma omp for schedule(guided, 1)
-            for (i = 0; i < p->nPoints; i=i+1) {
-                pointA = &p->maskPoints[i];
-                seriesA = (double *) rsMalloc(sizeof(double) * p->smoothnessReferenceFile->vDim);
-                seriesB = (double *) rsMalloc(sizeof(double) * p->smoothnessReferenceFile->vDim);
-                rsExtractTimecourseFromRSNiftiFileBuffer(p->smoothnessReferenceFile, &seriesA[0], pointA);
-                for (j = 0; j < p->kernelSize; j++) {
-                    z = pointA->z - halfKernelSize + j;
-                    for (k = 0; k < p->kernelSize; k++) {
-                        y = pointA->y - halfKernelSize + k;
-                        for (l = 0; l < p->kernelSize; l++) {
-                            x = pointA->x - halfKernelSize + l;
-                            if (x < 0 || x > maxX || y < 0 || y > maxY || z < 0 || z > maxZ) {
-                                r = log(-1.0);
-                            } else {
-                                pointB = rsMakePoint3D(x, y, z);
-                                rsExtractTimecourseFromRSNiftiFileBuffer(p->smoothnessReferenceFile, seriesB, pointB);
-                                r = rsCorrelation(&seriesA[0], &seriesB[0], p->smoothnessReferenceFile->vDim);
-                                rsFree(pointB);
-                            }
-                            neighbourhoodCorrelations[i][j][k][l] = r;
-                        }
-                    }
-
-                }
-                rsFree(seriesA);
-                rsFree(seriesB);
-          }
-        }
-    }
-
-    // mean all correlation maps to build a mean correlation matrix which we later can use as a filter
-    p->meanKernel = d3matrix(p->kernelSize - 1, p->kernelSize - 1, p->kernelSize - 1);
-    for (short z = 0; z < p->kernelSize; z++) {
-        for (short y = 0; y < p->kernelSize; y++) {
-            for (short x = 0; x < p->kernelSize; x++) {
-                double sum = 0.0;
-                unsigned long points = 0;
-                for (unsigned long i = 0; i < p->nPoints; i++) {
-                    const double r = neighbourhoodCorrelations[i][z][y][x];
-                    if (r != r) {
-                        continue;
-                    }
-                    points += 1;
-                    sum += r;
-                }
-                p->meanKernel[z][y][x] = sum / points;
-            }
-        }
-    }
-
-
-    free(neighbourhoodCorrelations[0][0][0]);
-    free(neighbourhoodCorrelations[0][0]);
-    free(neighbourhoodCorrelations[0]);
-    free(neighbourhoodCorrelations);
-
-    rsCloseNiftiFileAndFree(p->smoothnessReferenceFile);
 }
 
 void rsGenerateEpiSampleVolume(const rsGenerateEpiParameters *p, const gsl_rng *rng, const short t)
@@ -543,36 +475,77 @@ void rsGenerateEpiAdjustCorrelationForPoint(const rsGenerateEpiParameters *p, co
     rsWriteTimecourseToRSNiftiFileBuffer(p->output, series, point);
 }
 
-void rsGenerateEpiApplySmoothnessToVolume(const rsGenerateEpiParameters *p, const short t)
+void rsGenerateEpiApplyNeighbourhoodCorrelationToVolume(const rsGenerateEpiParameters *p, const short t)
 {
     double ***data = d3matrix(p->output->zDim - 1, p->output->yDim - 1, p->output->xDim - 1);
     rsExtractVolumeFromRSNiftiFileBuffer(p->output, data[0][0], t);
-
-    double ***xKernel = d3matrix(0,0,p->kernelSize-1);
-    double ***yKernel = d3matrix(0,p->kernelSize-1,0);
-    double ***zKernel = d3matrix(p->kernelSize-1,0,0);
-
-    const short xMidKernel = (p->kernelSize-1)/2;
-    const short yMidKernel = (p->kernelSize-1)/2;
-    const short zMidKernel = (p->kernelSize-1)/2;
-
-    for (short n=0; n<p->kernelSize; n++) {
-        xKernel[0][0][n] = p->meanKernel[zMidKernel][yMidKernel][n];
-    }
-
-    for (short n=0; n<p->kernelSize; n++) {
-        yKernel[0][n][0] = p->meanKernel[zMidKernel][n][xMidKernel];
-    }
-
-    for (short n=0; n<p->kernelSize; n++) {
-        zKernel[n][0][0] = p->meanKernel[n][yMidKernel][xMidKernel];
-    }
-
     double ***tmp = d3matrix(p->output->zDim - 1, p->output->yDim - 1, p->output->xDim - 1);
+    double ***kernel = d3matrix(p->kernelSize - 1, p->kernelSize - 1, p->kernelSize - 1);
 
-    rsConvolveWithKernel(tmp, data, xKernel, p->output->xDim, p->output->yDim, p->output->zDim, p->kernelSize, 1, 1);
-    rsConvolveWithKernel(data, tmp, yKernel, p->output->xDim, p->output->yDim, p->output->zDim, 1, p->kernelSize, 1);
-    rsConvolveWithKernel(tmp, data, zKernel, p->output->xDim, p->output->yDim, p->output->zDim, 1, 1, p->kernelSize);
+    const short maxX = p->output->xDim - 1;
+    const short maxY = p->output->yDim - 1;
+    const short maxZ = p->output->zDim - 1;
+
+    const short halfKernelSize = (p->kernelSize - 1) / 2;
+
+    for (short z=0; z < p->output->zDim; z++) {
+        for (short y=0; y < p->output->yDim; y++) {
+            for (short x=0; x < p->output->xDim; x++) {
+                Point3D *point = rsMakePoint3D(x, y, z);
+
+                // extract correlation matrix for current point
+                rsExtractTimecourseFromRSNiftiFileBuffer(p->neighbourhoodCorrelationFile, &kernel[0][0][0], point);
+
+                // normalize correlation matrix to be able to use it as kernel
+                double sum = 0;
+                unsigned int count = 0;
+                for (short i = 0; i < p->kernelSize-1; i++) {
+                    for (short j = 0; j < p->kernelSize-1; j++) {
+                        for (short k = 0; k < p->kernelSize-1; k++) {
+                            if (isnan(kernel[i][j][k]) || isinf(kernel[i][j][k])) {
+                                continue; // don't consider points for which the kernel does not have any value
+                            }
+                            short absX = x - halfKernelSize + k;
+                            short absY = y - halfKernelSize + j;
+                            short absZ = z - halfKernelSize + i;
+                            if (absX < 0 || absX > maxX || absY < 0 || absY > maxY || absZ < 0 || absZ > maxZ) {
+                                continue; // don't consider points that lie outside of the volume
+                            }
+                            sum += kernel[i][j][k];
+                            count++;
+                        }
+                    }
+                }
+                const double norm = sum / count;
+
+                // compute new value for the current data point based on the correlation kernel
+                if (isnan(norm) || isinf(norm)) {
+                    tmp[z][y][x] = data[z][y][x]; // simply keep the value if we don't have a proper kernel for this point
+                } else {
+                    double newValue = 0.0;
+                    for (short i = 0; i < p->kernelSize-1; i++) {
+                        for (short j = 0; j < p->kernelSize - 1; j++) {
+                            for (short k = 0; k < p->kernelSize - 1; k++) {
+                                if (isnan(kernel[i][j][k]) || isinf(kernel[i][j][k])) {
+                                    continue; // don't consider points for which the kernel does not have any value
+                                }
+                                short absX = x - halfKernelSize + k;
+                                short absY = y - halfKernelSize + j;
+                                short absZ = z - halfKernelSize + i;
+                                if (absX < 0 || absX > maxX || absY < 0 || absY > maxY || absZ < 0 || absZ > maxZ) {
+                                    continue; // don't consider points that lie outside of the volume
+                                }
+                                newValue += data[absZ][absY][absX] * kernel[i][j][k];
+                            }
+                        }
+                    }
+                    tmp[z][y][x] = newValue / norm;
+                }
+
+                rsFree(point);
+            }
+        }
+    }
 
     // write back to the buffer
     rsWriteVolumeToRSNiftiFileBuffer(p->output, tmp[0][0], t);
@@ -580,15 +553,11 @@ void rsGenerateEpiApplySmoothnessToVolume(const rsGenerateEpiParameters *p, cons
     // free up memory
     free(data[0][0]); free(data[0]); free(data);
     free(tmp[0][0]); free(tmp[0]); free(tmp);
-    free(xKernel[0][0]); free(xKernel[0]); free(xKernel);
-    free(yKernel[0][0]); free(yKernel[0]); free(yKernel);
-    free(zKernel[0][0]); free(zKernel[0]); free(zKernel);
+    free(kernel[0][0]); free(kernel[0]); free(kernel);
 }
 
 void rsGenerateEpiSmoothVoxelTemporally(const rsGenerateEpiParameters *p, const Point3D *point)
 {
-    const double sigma = 1.5;
-
     // get timeseries for point
     double *series = (double*)rsMalloc(sizeof(double) * ((size_t)p->output->vDim));
     double *smoothSeries = (double*)rsMalloc(sizeof(double) * ((size_t)p->output->vDim));
@@ -606,7 +575,7 @@ void rsGenerateEpiSmoothVoxelTemporally(const rsGenerateEpiParameters *p, const 
 
     // create gaussian kernel
     short kerneldim[3];
-    double ***kernel = rsCreateGaussianKernel(sigma, &kerneldim[0], &kerneldim[1], &kerneldim[2], 1, 1, 1);
+    double ***kernel = rsCreateGaussianKernel(p->sigma, &kerneldim[0], &kerneldim[1], &kerneldim[2], p->TR, 1, 1);
     double ***xKernel = d3matrix(0,0,kerneldim[0]-1);
     const short yMidKernel = (kerneldim[1]-1)/2;
     const short zMidKernel = (kerneldim[2]-1)/2;
@@ -703,46 +672,6 @@ double ***rsCreateGaussianKernel(double sigma, short *xdimkernel, short *ydimker
     return kernel;
 }
 
-/**
- * Copy of fslio's d4matrix() which uses unsigned long instead of int
- */
-double ****d4lmatrix(unsigned long th, unsigned long  zh,  unsigned long  yh, unsigned long  xh)
-{
-
-    unsigned long j;
-    unsigned long nvol = th+1;
-    unsigned long nslice = zh+1;
-    unsigned long nrow = yh+1;
-    unsigned long ncol = xh+1;
-    double ****t;
-
-
-    /** allocate pointers to vols */
-    t=(double ****) malloc((size_t)((nvol)*sizeof(double***)));
-    if (!t) RSIOERR("d4lmatrix: allocation failure");
-
-    /** allocate pointers to slices */
-    t[0]=(double ***) malloc((size_t)((nvol*nslice)*sizeof(double**)));
-    if (!t[0]) RSIOERR("d4lmatrix: allocation failure");
-
-    /** allocate pointers for ydim */
-    t[0][0]=(double **) malloc((size_t)((nvol*nslice*nrow)*sizeof(double*)));
-    if (!t[0][0]) RSIOERR("d4lmatrix: allocation failure");
-
-
-    /** allocate the data blob */
-    t[0][0][0]=(double *) malloc((size_t)((nvol*nslice*nrow*ncol)*sizeof(double)));
-    if (!t[0][0][0]) RSIOERR("d4lmatrix: allocation failure");
-
-
-    /** point everything to the data blob */
-    for(j=1;j<nrow*nslice*nvol;j++) t[0][0][j]=t[0][0][j-1]+ncol;
-    for(j=1;j<nslice*nvol;j++) t[0][j]=t[0][j-1]+nrow;
-    for(j=1;j<nvol;j++) t[j]=t[j-1]+nslice;
-
-    return t;
-}
-
 void rsGenerateEpiDestroy(rsGenerateEpiParameters *p)
 {
     if (p->stdFile != NULL) {
@@ -760,15 +689,14 @@ void rsGenerateEpiDestroy(rsGenerateEpiParameters *p)
         p->correlationFile = NULL;
     }
 
+    if (p->neighbourhoodCorrelationFile != NULL) {
+        rsCloseNiftiFileAndFree(p->neighbourhoodCorrelationFile);
+        p->neighbourhoodCorrelationFile = NULL;
+    }
+
     if (p->output != NULL) {
         rsCloseNiftiFileAndFree(p->output);
         p->output = NULL;
-    }
-
-    if (p->meanKernel != NULL) {
-        free(p->meanKernel[0][0]);
-        free(p->meanKernel[0]);
-        free(p->meanKernel);
     }
 
     rsGenerateEpiFreeParams(p);
