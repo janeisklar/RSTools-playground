@@ -1,7 +1,8 @@
-bin_PROGRAMS = rsvarsubjectsttest rsfit rssamplefilegen rsgenerateepi rsneighbourhoodcorrelation
+bin_PROGRAMS = rsvarsubjectsttest rsfit rssamplefilegen rsgenerateepi rsneighbourhoodcorrelation rsfixcorrelation
 
 rsvarsubjectsttest_SOURCES = rsvarsubjectsttest.c
 rsfit_SOURCES = rsfit.c rsfit_common.c rsfit_ui.c
 rssamplefilegen_SOURCES = rssamplefilegen.c rssamplefilegen_common.c rssamplefilegen_ui.c
 rsgenerateepi_SOURCES = rsgenerateepi.c rsgenerateepi_common.c rsgenerateepi_ui.c
 rsneighbourhoodcorrelation_SOURCES = rsneighbourhoodcorrelation.c rsneighbourhoodcorrelation_common.c rsneighbourhoodcorrelation_ui.c
+rsfixcorrelation_SOURCES = rsfixcorrelation.c rsfixcorrelation_common.c rsfixcorrelation_ui.c

@@ -274,7 +274,7 @@ void rsGenerateEpiRun(rsGenerateEpiParameters *p)
 
     // align temporal correlation
     if (p->verbose) {
-        fprintf(stdout, "Align temporal correlation with given the correlation map\n");
+        fprintf(stdout, "Align temporal correlation with the given correlation map\n");
     }
 
     #pragma omp parallel num_threads(rsGetThreadsNum()) private(i) shared(p)
@@ -473,6 +473,7 @@ void rsGenerateEpiAdjustCorrelationForPoint(const rsGenerateEpiParameters *p, co
 
     // write back corrected timeseries
     rsWriteTimecourseToRSNiftiFileBuffer(p->output, series, point);
+    rsFree(series);
 }
 
 void rsGenerateEpiApplyNeighbourhoodCorrelationToVolume(const rsGenerateEpiParameters *p, const short t)
