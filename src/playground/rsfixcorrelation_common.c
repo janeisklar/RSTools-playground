@@ -92,8 +92,8 @@ void rsFixCorrelationInit(rsFixCorrelationParameters *p)
     }
 
     // Create output volume
-    p->output = rsCloneNiftiFile(p->outputPath, p->input, RSNIFTI_CLONE_MEMORY, -1);
-    rsCloseNiftiFileAndFree(p->input);
+    p->output = rsCloneNiftiFile(p->outputPath, p->input, RSNIFTI_CLONE_POINTER, -1);
+    rsCloseNiftiFile(p->input, TRUE);
 
     if (!p->output->readable) {
         fprintf(stderr, "\nError: The nifti file that was supplied as output (%s) could not be created.\n", p->outputPath);
@@ -184,6 +184,10 @@ void rsFixCorrelationAdjustCorrelationForPoint(const rsFixCorrelationParameters 
     // de-mean the series (should already roughly be the case, but just to make it more numerically stable)
     gsl_vector_add_constant(x2, meanX2 * -1.0);
 
+    // set standard deviation to 1
+    const double stdX2 = gsl_stats_sd(x2->data, 1, p->output->vDim);
+    gsl_vector_scale(x2, 1.0 / stdX2);
+
     // fix the correlation of the series while leaving the reference timecourse untouched.
     // the following is based on:
     // http://stats.stackexchange.com/questions/15011/generate-a-random-variable-with-a-defined-correlation-to-an-existing-variable#15040
@@ -245,12 +249,16 @@ void rsFixCorrelationAdjustCorrelationForPoint(const rsFixCorrelationParameters 
     // x2 = y2 + (1 / tan(theta)) * y1
     gsl_vector_view y1 = gsl_matrix_column(Y, 0);
     gsl_vector_view y2 = gsl_matrix_column(Y, 1);
-    double invTanTheta = 1 / tan(theta);
+    const double invTanTheta = 1 / tan(theta);
     gsl_vector_scale(&y1.vector, invTanTheta);
     gsl_vector_memcpy(x2, &y2.vector);
     gsl_vector_add(x2, &y1.vector);
 
-    // re-add mean that was subtracted before
+    // re-apply the mean and std dev it had before
+    const double newMeanX2 = gsl_stats_mean(x2->data, 1, p->output->vDim);
+    gsl_vector_add_constant(x2, -1.0 * newMeanX2);
+    const double newStdX2 = gsl_stats_sd(x2->data, 1, p->output->vDim);
+    gsl_vector_scale(x2, stdX2 / newStdX2);
     gsl_vector_add_constant(x2, meanX2);
 
     // write result to series c array

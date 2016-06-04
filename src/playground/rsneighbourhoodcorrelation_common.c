@@ -144,7 +144,7 @@ BOOL rsNeighbourhoodCorrelationComputeCorrelationForFile(rsNeighbourhoodCorrelat
     }
 
     if (file->xDim != p->output->xDim || file->yDim != p->output->yDim || file->zDim != p->output->zDim) {
-        fprintf(stderr, "\nError: The nifti file %s was expected to have dimensions %dx%dx%d, but has %dx%dx%d.\n", p->output->xDim, p->output->yDim, p->output->zDim, file->xDim, file->yDim, file->zDim);
+        fprintf(stderr, "\nError: The nifti file %s was expected to have dimensions %dx%dx%d, but has %dx%dx%d.\n", p->inputPaths[fileIndex], p->output->xDim, p->output->yDim, p->output->zDim, file->xDim, file->yDim, file->zDim);
         return FALSE;
     }
 

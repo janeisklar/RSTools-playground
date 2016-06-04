@@ -1,4 +1,5 @@
 #include "rsneighbourhoodcorrelation_ui.h"
+#include <stdio.h>
 
 rsNeighbourhoodCorrelationParameters *rsGenerateEpiInitParameters()
 {
