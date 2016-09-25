@@ -13,6 +13,7 @@ void rsSampleFileGenDestroy(rsSampleFileGenParameters *p);
 void rsSampleFileGenCheckerboard(double *output, const Point3D *point, const int length, const rsSampleFileGenParameters *p);
 void rsSampleFileGenCheckerSphere(double *output, const Point3D *point, const int length, const rsSampleFileGenParameters *p);
 void rsSampleFileGenSpheres(double *output, const Point3D *point, const int length, const rsSampleFileGenParameters *p);
+void rsSampleFileGenEuclideanDist(double *output, const FloatPoint3D *point, const int length, const rsSampleFileGenParameters *p);
 
 #ifdef __cplusplus
 }

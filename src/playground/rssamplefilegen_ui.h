@@ -20,6 +20,7 @@ typedef struct {
     int checkerSphereNY;
     int checkerSphereTL;
     Point3D *spherePoint;
+    FloatPoint3D *euclideanCenter;
     int sphereRepetitionLength;
     int sphereWidth;
     

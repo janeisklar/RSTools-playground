@@ -12,6 +12,7 @@ rsSampleFileGenParameters *rsSampleFileGenInitParameters()
     p->output                  = NULL;
     p->parametersValid         = FALSE;
     p->checkerboardBlockLength = -1;
+    p->euclideanCenter         = NULL;
     p->spherePoint             = NULL;
     p->sphereRepetitionLength  = -1;
     p->sphereWidth             = -1;
@@ -174,9 +175,55 @@ gboolean rsSampleFileGenParseSphere(const gchar *option_name, const gchar *value
     return FALSE;
 }
 
+gboolean rsSampleFileGenParseEuclideanCenter(const gchar *option_name, const gchar *value, gpointer data, GError **error)
+{
+    rsSampleFileGenParameters *p = (rsSampleFileGenParameters*) data;
+
+    // copy value(const)
+    size_t length = strlen(value);
+    char v[length+1];
+    sprintf(&v[0], "%s", value);
+
+    // parse value
+    char *strX;
+    char *strY;
+    char *strZ;
+    strX = strtok(   v, ",");
+    strY = strtok(NULL, ",");
+    strZ = strtok(NULL, ",");
+
+    double x=-99999.0f, y=-99999.0f, z=-99999.0f;
+
+    // if we were given exactly 5 numbers separated by comma parse them
+    if ( strtok(NULL,",") == NULL && strX != NULL && strY != NULL && strZ != NULL) {
+        x = atof(strX);
+        y = atof(strY);
+        z = atof(strZ);
+    }
+
+    // return success if we sucessfully received 5 numbers
+    if ( x >= -99998.0 && y >= -99998.0 && z >= -99998.0) {
+        p->euclideanCenter = rsMakeFloatPoint3D((float)x, (float)y, (float)z);
+        return TRUE;
+    }
+
+    // anything else should lead to an error
+    g_set_error(
+        error,
+        G_OPTION_ERROR,
+        G_OPTION_ERROR_BAD_VALUE,
+        "%s: %s",
+        option_name,
+        "format should be 'x,y,z'"
+    );
+
+    return FALSE;
+}
+
 void rsSampleFileGenBuildInterface(rsSampleFileGenParameters *p)
 {
     GOptionArgFunc cbSpheres = (GOptionArgFunc)rsSampleFileGenParseSphere;
+    GOptionArgFunc cbEuclideanDist = (GOptionArgFunc)rsSampleFileGenParseEuclideanCenter;
     GOptionArgFunc cbCheckerSphere = (GOptionArgFunc)rsSampleFileGenParseCheckerSphere;
     
     // initialize the most common options
@@ -224,6 +271,14 @@ void rsSampleFileGenBuildInterface(rsSampleFileGenParameters *p)
     o->storage             = cbSpheres;
     o->cli_description     = "creates a set of spheres that repeat around a specified point in voxel coordinates (x,y,z) after a specified number of voxels (n) with a line thickness of (w voxels)";
     o->cli_arg_description = "x,y,z,w,n";
+    rsUIAddOption(p->interface, o);
+
+    o = rsUINewOption();
+    o->name                = "euclideandist";
+    o->type                = G_OPTION_ARG_CALLBACK;
+    o->storage             = cbEuclideanDist;
+    o->cli_description     = "the values of the resulting output dataset will correspond to the euclidean distance from the specified coordinates (mm coordinates!)";
+    o->cli_arg_description = "x,y,z";
     rsUIAddOption(p->interface, o);
     
     o = rsUINewOption();

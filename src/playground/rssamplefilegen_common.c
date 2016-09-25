@@ -1,3 +1,5 @@
+#include <nifti/rsniftiutils.h>
+#include <rscommon.h>
 #include "rssamplefilegen_common.h"
 #include "rssamplefilegen_ui.h"
 #include "utils/rsio.h"
@@ -64,8 +66,13 @@ void rsSampleFileGenRun(rsSampleFileGenParameters *p)
     double *signal;
     double *signal2;
     Point3D *point;
+    FloatPoint3D *pointMM;
+
+    mat44 inputWorldMatrix = p->output->fslio->niftiptr->sform_code == NIFTI_XFORM_UNKNOWN
+                             ? p->output->fslio->niftiptr->qto_xyz
+                             : p->output->fslio->niftiptr->sto_xyz;
         
-    #pragma omp parallel num_threads(rsGetThreadsNum()) private(z,y,x,signal,point) shared(processedSlices)
+    #pragma omp parallel num_threads(rsGetThreadsNum()) private(z,y,x,signal,point,pointMM) shared(processedSlices)
     {
         #pragma omp for schedule(guided)
         for (z=0; z<p->output->zDim; z++) {
@@ -82,12 +89,18 @@ void rsSampleFileGenRun(rsSampleFileGenParameters *p)
                         rsSampleFileGenSpheres(signal, point, p->output->vDim, p);
                     } else if (p->checkerSphereNX > 0) {
                         rsSampleFileGenCheckerSphere(signal, point, p->output->vDim, p);
+                    } else if (p->euclideanCenter != NULL) {
+                        pointMM = rsMakeFloatPoint3D(0, 0, 0);
+                        FslGetMMCoord(inputWorldMatrix, x, y, z, &pointMM->x, &pointMM->y, &pointMM->z);
+                        rsSampleFileGenEuclideanDist(signal, pointMM, p->output->vDim, p);
+                        rsFree(pointMM);
                     }
                     
                     /* write out filtered data to buffer */
                     rsWriteTimecourseToRSNiftiFileBuffer(p->output, signal, point);
 
                     rsFree(signal);
+                    rsFree(point);
                 }
             }
             
@@ -174,6 +187,21 @@ void rsSampleFileGenSpheres(double *output, const Point3D *point, const int leng
     
     for (int i=0; i<length; i++) {
         output[i] = isInBlock ? 1.0 : 0.0;
+    }
+}
+
+void rsSampleFileGenEuclideanDist(double *output, const FloatPoint3D *point, const int length, const rsSampleFileGenParameters *p) {
+    const double distance = pow(
+        (
+            pow((double)p->euclideanCenter->x - (double)point->x, 2.0) +
+            pow((double)p->euclideanCenter->y - (double)point->y, 2.0) +
+            pow((double)p->euclideanCenter->z - (double)point->z, 2.0)
+        ),
+        1.0/2.0
+    );
+
+    for (int i=0; i<length; i++) {
+        output[i] = distance;
     }
 }
 
