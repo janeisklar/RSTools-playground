@@ -203,7 +203,7 @@ void rsMutualInformationRun(rsMutualInformationParameters *p)
 double rsMutualInformationComputeMI(const rsMutualInformationParameters *params, const unsigned int indexA, const unsigned int indexB)
 {
     // bin the number of points so that each bin can be executed in parallel
-    const unsigned int nProcBins = rsGetThreadsNum() * 100;
+    const unsigned int nProcBins = rsGetThreadsNum();
     const unsigned long procBinWidth = (unsigned long)lround(((double)params->nPoints) / ((double)nProcBins));
     const unsigned int  nHistBins = 256;
     unsigned int b, i, j;
