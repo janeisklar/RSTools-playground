@@ -74,14 +74,14 @@ void rsMutualInformationInit(rsMutualInformationParameters *p)
 
     // load files
     if (p->verbose) {
-        fprintf(stdout, "Loading %d input files\n", (int)p->nFiles);
+        fprintf(stdout, "\nLoading %d input files\n", (int)p->nFiles);
     }
 
     p->files = (double**)rsMalloc(p->nFiles * sizeof(double*));
 
     for (unsigned int i=0; i<p->nFiles; i++) {
         if (p->verbose) {
-            fprintf(stdout, "%s..\n", p->filePaths[i]);
+            fprintf(stdout, "• %s\n", p->filePaths[i]);
         }
 
         rsNiftiFile *file = rsOpenNiftiFile(p->filePaths[i], RSNIFTI_OPEN_READ);
@@ -115,40 +115,60 @@ void rsMutualInformationRun(rsMutualInformationParameters *p)
 
     // Compute minima and maxima of points in the mask for each file
     if (p->verbose) {
-        fprintf(stdout, "Computing within-mask min and max intensity values for each file\n");
+        fprintf(stdout, "\nComputing within-mask 97%% confidence interval intensity range for each file\n");
     }
 
     p->fileMinima = (double*)rsMalloc(p->nFiles * sizeof(double));
     p->fileMaxima = (double*)rsMalloc(p->nFiles * sizeof(double));
 
     unsigned int i;
-    unsigned long j;
-    #pragma omp parallel num_threads(rsGetThreadsNum()) private(i,j) shared(p)
-    {
-        #pragma omp for schedule(guided)
-        for (i=0; i<p->nFiles; i++) {
-            // initialize with first point
-            p->fileMinima[i] = p->files[i][0];
-            p->fileMaxima[i] = p->fileMinima[i];
+    unsigned long j, k, nNonEmptyPoints;
+    double *tmp;
+    //#pragma omp parallel num_threads(rsGetThreadsNum()) private(i,j,tmp,k,nNonEmptyPoints) shared(p)
+    //{
+    //    #pragma omp for schedule(guided)
+    for (i=0; i<p->nFiles; i++) {
+        nNonEmptyPoints = 0L;
 
-            // go through all points
-            for (j=0; j<p->nPoints; j++) {
-                const double currentValue = p->files[i][j];
-                if (isnan(currentValue) || isinf(currentValue)) {
-                    continue;
-                }
-                if (p->fileMinima[i] > currentValue) {
-                    p->fileMinima[i] = currentValue;
-                }
-                if (p->fileMaxima[i] < currentValue) {
-                    p->fileMaxima[i] = currentValue;
-                }
+        // count number of points that are neither NaN nor Inf
+        for (j=0; j<p->nPoints; j++) {
+            const double currentValue = p->files[i][j];
+            if (isnan(currentValue) || isinf(currentValue)) {
+                continue;
             }
+            nNonEmptyPoints++;
+        }
+
+        tmp = (double*)rsMalloc(nNonEmptyPoints * sizeof(double));
+
+        // create copy (as we need to sort it)
+        k=0;
+        for (j=0; j<p->nPoints; j++) {
+            const double currentValue = p->files[i][j];
+            if (isnan(currentValue) || isinf(currentValue)) {
+                continue;
+            }
+            tmp[k] = currentValue;
+            k++;
+        }
+
+        // sort the copy
+        gsl_sort(tmp, 1, nNonEmptyPoints);
+
+        // compute lower and upper quantile
+        p->fileMaxima[i] = gsl_stats_quantile_from_sorted_data(tmp, 1, nNonEmptyPoints, 0.97);
+        p->fileMinima[i] = gsl_stats_quantile_from_sorted_data(tmp, 1, nNonEmptyPoints, 0.03);
+
+        rsFree(tmp);
+
+        if (p->verbose) {
+            fprintf(stdout, "• %s [%.1f,%.1f]\n", p->filePaths[i], p->fileMinima[i], p->fileMaxima[i]);
         }
     }
+    //}
 
     if (p->verbose) {
-        fprintf(stdout, "Computing mutual information coefficient\n");
+        fprintf(stdout, "\nComputing mutual information coefficient\n");
     }
 
     // Iterate over all elements of the resulting matrix and compute the MI
@@ -166,7 +186,7 @@ void rsMutualInformationRun(rsMutualInformationParameters *p)
     }
 
     if (p->verbose) {
-        fprintf(stdout, "Result:\n");
+        fprintf(stdout, "\nResult:\n");
     }
 
     // Write out MI matrix
