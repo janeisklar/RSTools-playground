@@ -59,11 +59,6 @@ rsGenerateEpiParameters *rsGenerateEpiParseParams(int argc, char *argv[])
         return p;
     }
 
-    if (p->correlationPath == NULL) {
-        fprintf(stderr, "No correlation volume specified(--correlation)!\n");
-        return p;
-    }
-
     if (p->neighbourhoodCorrelationPath == NULL) {
         fprintf(stderr, "No correlation volume specified(--neighbourhoodCorrelation)!\n");
         return p;

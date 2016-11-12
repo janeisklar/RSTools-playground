@@ -55,16 +55,18 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
     }
 
     // load correlation file
-    p->correlationFile = rsOpenNiftiFile(p->correlationPath, RSNIFTI_OPEN_READ);
+    if (p->correlationPath != NULL) {
+        p->correlationFile = rsOpenNiftiFile(p->correlationPath, RSNIFTI_OPEN_READ);
 
-    if (!p->correlationFile->readable) {
-        fprintf(stderr, "\nError: The nifti file containing the correlation values (%s) could not be read.\n", p->correlationPath);
-        return;
-    }
+        if (!p->correlationFile->readable) {
+            fprintf(stderr, "\nError: The nifti file containing the correlation values (%s) could not be read.\n", p->correlationPath);
+            return;
+        }
 
-    if (p->correlationFile->vDim > 1) {
-        fprintf(stderr, "\nError: The supplied correlation map must not have more than one volume!\n");
-        return;
+        if (p->correlationFile->vDim > 1) {
+            fprintf(stderr, "\nError: The supplied correlation map must not have more than one volume!\n");
+            return;
+        }
     }
 
     // load mask file
@@ -75,9 +77,11 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
         return;
     }
 
-    if (p->maskFile->xDim != p->correlationFile->xDim || p->maskFile->yDim != p->correlationFile->yDim || p->maskFile->zDim != p->correlationFile->zDim) {
-        fprintf(stderr, "\nError: The dimensions of both the mask and correlation file must match!\n");
-        return;
+    if (p->correlationPath != NULL) {
+        if (p->maskFile->xDim != p->correlationFile->xDim || p->maskFile->yDim != p->correlationFile->yDim || p->maskFile->zDim != p->correlationFile->zDim) {
+            fprintf(stderr, "\nError: The dimensions of both the mask and correlation file must match!\n");
+            return;
+        }
     }
 
     rsCloseNiftiFileAndFree(p->maskFile);
@@ -93,9 +97,11 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
         return;
     }
 
-    if (p->neighbourhoodCorrelationFile->xDim != p->correlationFile->xDim || p->neighbourhoodCorrelationFile->yDim != p->correlationFile->yDim || p->neighbourhoodCorrelationFile->zDim != p->correlationFile->zDim) {
-        fprintf(stderr, "\nError: The dimensions x, y and z of both the neighbourhood correlation file and correlation file must match!\n");
-        return;
+    if (p->correlationPath != NULL) {
+        if (p->neighbourhoodCorrelationFile->xDim != p->correlationFile->xDim || p->neighbourhoodCorrelationFile->yDim != p->correlationFile->yDim || p->neighbourhoodCorrelationFile->zDim != p->correlationFile->zDim) {
+            fprintf(stderr, "\nError: The dimensions x, y and z of both the neighbourhood correlation file and correlation file must match!\n");
+            return;
+        }
     }
 
     // derive kernel size from the length of the given neighbourhood correlation file
@@ -126,7 +132,7 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
         return;
     }
 
-    if (p->verbose) {
+    if (p->verbose && p->correlationPath != NULL) {
         fprintf(stdout, "Correlation Dim: %d %d %d (%d Volumes)\n", p->correlationFile->xDim, p->correlationFile->yDim, p->correlationFile->zDim, p->correlationFile->vDim);
     }
 
@@ -155,7 +161,11 @@ void rsGenerateEpiInit(rsGenerateEpiParameters *p)
     }
 
     // Create output volume
-    p->output = rsCloneNiftiFile(p->outputPath, p->correlationFile, RSNIFTI_OPEN_ALLOC, p->nReferenceValues);
+    if (p->correlationPath != NULL) {
+        p->output = rsCloneNiftiFile(p->outputPath, p->correlationFile, RSNIFTI_OPEN_ALLOC, p->nReferenceValues);
+    } else {
+        p->output = rsCloneNiftiFile(p->outputPath, p->maskFile, RSNIFTI_OPEN_ALLOC, p->nReferenceValues);
+    }
 
     if (!p->output->readable) {
         fprintf(stderr, "\nError: The nifti file that was supplied as output (%s) could not be created.\n", p->outputPath);
@@ -190,13 +200,9 @@ void rsGenerateEpiRun(rsGenerateEpiParameters *p)
         p->reference[t] -= referenceValueMean;
     }
 
-    // extract correlation volume from the buffer
-    double ***correlationData = d3matrix(p->correlationFile->zDim - 1, p->correlationFile->yDim - 1, p->correlationFile->xDim - 1);
-    rsExtractVolumeFromRSNiftiFileBuffer(p->correlationFile, correlationData[0][0], 0);
-
     // extract list of points that are to be considered
     p->nPoints = 0L;
-    p->maskPoints = rsReadMask(p->maskPath, p->correlationFile->xDim, p->correlationFile->yDim, p->correlationFile->zDim, &p->nPoints, NULL, p->correlationFile->fslio, NULL);
+    p->maskPoints = rsReadMask(p->maskPath, p->maskFile->xDim, p->maskFile->yDim, p->maskFile->zDim, &p->nPoints, NULL, p->maskFile->fslio, NULL);
 
     if (p->maskPoints == NULL || p->nPoints < 1) {
         fprintf(stderr, "\nError: Mask invalid.\n");
@@ -273,15 +279,17 @@ void rsGenerateEpiRun(rsGenerateEpiParameters *p)
     }
 
     // align temporal correlation
-    if (p->verbose) {
-        fprintf(stdout, "Align temporal correlation with the given correlation map\n");
-    }
+    if (p->correlationPath != NULL) {
+        if (p->verbose) {
+            fprintf(stdout, "Align temporal correlation with the given correlation map\n");
+        }
 
-    #pragma omp parallel num_threads(rsGetThreadsNum()) private(i) shared(p)
-    {
-        #pragma omp for schedule(guided, 1)
-        for (i = 0; i < p->nPoints; i++) {
-            rsGenerateEpiAdjustCorrelationForPoint(p, &(p->maskPoints[i]));
+        #pragma omp parallel num_threads(rsGetThreadsNum()) private(i) shared(p)
+        {
+            #pragma omp for schedule(guided, 1)
+            for (i = 0; i < p->nPoints; i++) {
+                rsGenerateEpiAdjustCorrelationForPoint(p, &(p->maskPoints[i]));
+            }
         }
     }
 
