@@ -7,6 +7,8 @@ rsFixCorrelationParameters *rsFixCorrelationInitParameters()
 
     p->inputPath = NULL;
     p->outputPath = NULL;
+    p->stdPath = NULL;
+    p->meanPath = NULL;
     p->correlationPath = NULL;
     p->referencePath = NULL;
     p->callString = NULL;
@@ -28,6 +30,8 @@ void rsFixCorrelationFreeParams(rsFixCorrelationParameters *p)
     rsFree(p->inputPath);
     rsFree(p->correlationPath);
     rsFree(p->referencePath);
+    rsFree(p->stdPath);
+    rsFree(p->meanPath);
     rsFree(p->output);
     rsFree(p->callString);
     rsUIDestroyInterface(p->interface);
@@ -115,6 +119,22 @@ void rsFixCorrelationBuildInterface(rsFixCorrelationParameters *p)
     o->cli_description =
         "a txt-file that contains the reference timecourse. The output timecourses will correlate with this timecourse by the r-values specified using --correlation";
     o->cli_arg_description = "<txt-file>";
+    rsUIAddOption(p->interface, o);
+
+    o = rsUINewOption();
+    o->name = "mean";
+    o->type = G_OPTION_ARG_FILENAME;
+    o->storage = &p->meanPath;
+    o->cli_description = "a 3D-nifti specifying the mean of the resulting output";
+    o->cli_arg_description = "<volume>";
+    rsUIAddOption(p->interface, o);
+
+    o = rsUINewOption();
+    o->name = "std";
+    o->type = G_OPTION_ARG_FILENAME;
+    o->storage = &p->stdPath;
+    o->cli_description = "a 3D-nifti specifying the standard deviation of the resulting output";
+    o->cli_arg_description = "<volume>";
     rsUIAddOption(p->interface, o);
 
     o = rsUINewOption();

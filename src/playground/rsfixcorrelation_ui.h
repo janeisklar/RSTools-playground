@@ -15,6 +15,8 @@ typedef struct {
     char *outputPath;
     char *correlationPath;
     char *referencePath;
+    char *stdPath;
+    char *meanPath;
     char *callString;
 
     BOOL verbose;
@@ -23,6 +25,8 @@ typedef struct {
     rsNiftiFile *input;
     rsNiftiFile *correlationFile;
     rsNiftiFile *output;
+    rsNiftiFile *stdFile;
+    rsNiftiFile *meanFile;
 
     double *reference;
     unsigned int nReferenceValues;

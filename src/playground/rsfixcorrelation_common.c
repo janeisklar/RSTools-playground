@@ -91,6 +91,30 @@ void rsFixCorrelationInit(rsFixCorrelationParameters *p)
         fprintf(stdout, "Correlation Dim: %d %d %d (%d Volumes)\n", p->correlationFile->xDim, p->correlationFile->yDim, p->correlationFile->zDim, p->correlationFile->vDim);
     }
 
+    // load mean / std files
+    if (p->meanPath != NULL) {
+        p->meanFile = rsOpenNiftiFile(p->meanPath, RSNIFTI_OPEN_READ);
+        if (!p->meanFile->readable) {
+            fprintf(stderr, "\nError: The nifti file containing the mean (%s) could not be read.\n", p->meanPath);
+            return;
+        }
+        if (p->meanFile->xDim != p->correlationFile->xDim || p->meanFile->yDim != p->correlationFile->yDim || p->meanFile->zDim != p->correlationFile->zDim) {
+            fprintf(stderr, "\nError: The dimensions of both the mean and correlation file must match!\n");
+            return;
+        }
+    }
+    if (p->stdPath != NULL) {
+        p->stdFile = rsOpenNiftiFile(p->stdPath, RSNIFTI_OPEN_READ);
+        if (!p->stdFile->readable) {
+            fprintf(stderr, "\nError: The nifti file containing the standard deviation (%s) could not be read.\n", p->stdPath);
+            return;
+        }
+        if (p->stdFile->xDim != p->correlationFile->xDim || p->stdFile->yDim != p->correlationFile->yDim || p->stdFile->zDim != p->correlationFile->zDim) {
+            fprintf(stderr, "\nError: The dimensions of both the standard deviation and correlation file must match!\n");
+            return;
+        }
+    }
+
     // Create output volume
     p->output = rsCloneNiftiFile(p->outputPath, p->input, RSNIFTI_CLONE_POINTER, -1);
     rsCloseNiftiFile(p->input, TRUE);
@@ -146,6 +170,52 @@ void rsFixCorrelationRun(rsFixCorrelationParameters *p)
                 }
             }
         }
+    }
+
+    // apply standard deviation
+    if (p->stdFile != NULL) {
+        if (p->verbose) {
+            fprintf(stdout, "Scaling to the supplied standard deviation\n");
+        }
+        double ***stdData = d3matrix(p->stdFile->zDim - 1, p->stdFile->yDim - 1, p->stdFile->xDim - 1);
+        double ***outputData = d3matrix(p->output->zDim - 1, p->output->yDim - 1, p->output->xDim - 1);
+        rsExtractVolumeFromRSNiftiFileBuffer(p->stdFile, stdData[0][0], 0);
+        for (short t=0; t<p->output->vDim; t++) {
+            rsExtractVolumeFromRSNiftiFileBuffer(p->output, outputData[0][0], t);
+            for (short z=0; z<p->output->zDim; z++) {
+                for (short y=0; y<p->output->yDim; y++) {
+                    for (short x=0; x<p->output->xDim; x++) {
+                        outputData[z][y][x] *= stdData[z][y][x];
+                    }
+                }
+            }
+            rsWriteVolumeToRSNiftiFileBuffer(p->output, outputData[0][0], t);
+        }
+        free(stdData[0][0]); free(stdData[0]); free(stdData);
+        free(outputData[0][0]); free(outputData[0]); free(outputData);
+    }
+
+    // apply mean
+    if (p->meanFile != NULL) {
+        if (p->verbose) {
+            fprintf(stdout, "Adding the supplied mean\n");
+        }
+        double ***meanData = d3matrix(p->meanFile->zDim - 1, p->meanFile->yDim - 1, p->meanFile->xDim - 1);
+        double ***outputData = d3matrix(p->output->zDim - 1, p->output->yDim - 1, p->output->xDim - 1);
+        rsExtractVolumeFromRSNiftiFileBuffer(p->meanFile, meanData[0][0], 0);
+        for (short t=0; t<p->output->vDim; t++) {
+            rsExtractVolumeFromRSNiftiFileBuffer(p->output, outputData[0][0], t);
+            for (short z=0; z<p->output->zDim; z++) {
+                for (short y=0; y<p->output->yDim; y++) {
+                    for (short x=0; x<p->output->xDim; x++) {
+                        outputData[z][y][x] += meanData[z][y][x];
+                    }
+                }
+            }
+            rsWriteVolumeToRSNiftiFileBuffer(p->output, outputData[0][0], t);
+        }
+        free(meanData[0][0]); free(meanData[0]); free(meanData);
+        free(outputData[0][0]); free(outputData[0]); free(outputData);
     }
 
     if (p->verbose) {
